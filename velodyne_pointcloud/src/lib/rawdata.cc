@@ -1,4 +1,20 @@
 /*
+ * Copyright 2015-2019 Autoware Foundation. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
  *  Copyright (C) 2007 Austin Robot Technology, Patrick Beeson
  *  Copyright (C) 2009, 2010, 2012 Austin Robot Technology, Jack O'Quin
  *
@@ -45,7 +61,7 @@ inline float SQR(float val) { return val*val; }
   ////////////////////////////////////////////////////////////////////////
 
   RawData::RawData() {}
-  
+
   /** Update parameters: conversions and update */
   void RawData::setParameters(double min_range,
                               double max_range,
@@ -58,13 +74,13 @@ inline float SQR(float val) { return val*val; }
     //converting angle parameters into the velodyne reference (rad)
     config_.tmp_min_angle = view_direction + view_width/2;
     config_.tmp_max_angle = view_direction - view_width/2;
-    
+
     //computing positive modulo to keep theses angles into [0;2*M_PI]
     config_.tmp_min_angle = fmod(fmod(config_.tmp_min_angle,2*M_PI) + 2*M_PI,2*M_PI);
     config_.tmp_max_angle = fmod(fmod(config_.tmp_max_angle,2*M_PI) + 2*M_PI,2*M_PI);
-    
+
     //converting into the hardware velodyne ref (negative yaml and degrees)
-    //adding 0.5 perfomrs a centered double to int conversion 
+    //adding 0.5 perfomrs a centered double to int conversion
     config_.min_angle = 100 * (2*M_PI - config_.tmp_min_angle) * 180 / M_PI + 0.5;
     config_.max_angle = 100 * (2*M_PI - config_.tmp_max_angle) * 180 / M_PI + 0.5;
     if (config_.min_angle == config_.max_angle)
@@ -87,6 +103,21 @@ inline float SQR(float val) { return val*val; }
     }
   }
 
+  int RawData::getNumLasers() const
+  {
+      return calibration_.num_lasers;
+  }
+
+  double RawData::getMaxRange() const
+  {
+      return config_.max_range;
+  }
+
+  double RawData::getMinRange() const
+  {
+      return config_.min_range;
+  }
+
   /** Set up for on-line operation. */
   int RawData::setup(ros::NodeHandle private_nh)
   {
@@ -104,13 +135,13 @@ inline float SQR(float val) { return val*val; }
 
     calibration_.read(config_.calibrationFile);
     if (!calibration_.initialized) {
-      ROS_ERROR_STREAM("Unable to open calibration file: " << 
+      ROS_ERROR_STREAM("Unable to open calibration file: " <<
           config_.calibrationFile);
       return -1;
     }
-    
+
     ROS_INFO_STREAM("Number of lasers: " << calibration_.num_lasers << ".");
-    
+
     // Set up cached values for sin and cos of all the possible headings
     for (uint16_t rot_index = 0; rot_index < ROTATION_MAX_UNITS; ++rot_index) {
       float rotation = angles::from_degrees(ROTATION_RESOLUTION * rot_index);
@@ -151,7 +182,6 @@ inline float SQR(float val) { return val*val; }
       return 0;
   }
 
-
   /** @brief convert raw packet to point cloud
    *
    *  @param pkt raw packet to unpack
@@ -168,7 +198,7 @@ inline float SQR(float val) { return val*val; }
       unpack_vlp16(pkt, data);
       return;
     }
-    
+
     const raw_packet_t *raw = (const raw_packet_t *) &pkt.data[0];
 
     for (int i = 0; i < BLOCKS_PER_PACKET; i++) {
@@ -183,7 +213,7 @@ inline float SQR(float val) { return val*val; }
       }
 
       for (int j = 0, k = 0; j < SCANS_PER_BLOCK; j++, k += RAW_SCAN_SIZE) {
-        
+
         float x, y, z;
         float intensity;
         const uint8_t laser_number  = j + bank_origin;
@@ -195,75 +225,83 @@ inline float SQR(float val) { return val*val; }
         union two_bytes tmp;
         tmp.bytes[0] = block.data[k];
         tmp.bytes[1] = block.data[k+1];
-        if (tmp.bytes[0]==0 &&tmp.bytes[1]==0 ) //no laser beam return
-        {
-          continue;
-        }
+        // if (tmp.bytes[0]==0 &&tmp.bytes[1]==0 ) //no laser beam return
+        // {
+        //   continue;
+        // }
 
-        float distance = tmp.uint * calibration_.distance_resolution_m;
-        distance += corrections.dist_correction;
-        if (!pointInRange(distance)) continue;
+        // float distance = tmp.uint * calibration_.distance_resolution_m;
+        // distance += corrections.dist_correction;
+        // if (!pointInRange(distance)) continue;
 
         /*condition added to avoid calculating points which are not
           in the interesting defined area (min_angle < area < max_angle)*/
         if ((block.rotation >= config_.min_angle
              && block.rotation <= config_.max_angle
              && config_.min_angle < config_.max_angle)
-             ||(config_.min_angle > config_.max_angle 
-             && (raw->blocks[i].rotation <= config_.max_angle 
-             || raw->blocks[i].rotation >= config_.min_angle))){
+             ||(config_.min_angle > config_.max_angle
+             && (raw->blocks[i].rotation <= config_.max_angle
+             || raw->blocks[i].rotation >= config_.min_angle))) {
           float distance = tmp.uint * calibration_.distance_resolution_m;
-          distance += corrections.dist_correction;
-  
+
+          bool is_invalid_distance = false;
+          if(distance == 0.0) {
+              is_invalid_distance = true;
+              distance = 0.3;
+          }
+          else {
+            distance += corrections.dist_correction;
+          }
+
           float cos_vert_angle = corrections.cos_vert_correction;
           float sin_vert_angle = corrections.sin_vert_correction;
           float cos_rot_correction = corrections.cos_rot_correction;
           float sin_rot_correction = corrections.sin_rot_correction;
-  
+
           // cos(a-b) = cos(a)*cos(b) + sin(a)*sin(b)
           // sin(a-b) = sin(a)*cos(b) - cos(a)*sin(b)
-          float cos_rot_angle = 
+          float cos_rot_angle =
             cos_rot_table_[block.rotation] * cos_rot_correction +
             sin_rot_table_[block.rotation] * sin_rot_correction;
-          float sin_rot_angle = 
+          float sin_rot_angle =
             sin_rot_table_[block.rotation] * cos_rot_correction -
             cos_rot_table_[block.rotation] * sin_rot_correction;
-  
+
           float horiz_offset = corrections.horiz_offset_correction;
           float vert_offset = corrections.vert_offset_correction;
-  
+
           // Compute the distance in the xy plane (w/o accounting for rotation)
           /**the new term of 'vert_offset * sin_vert_angle'
            * was added to the expression due to the mathemathical
            * model we used.
            */
           float xy_distance = distance * cos_vert_angle - vert_offset * sin_vert_angle;
-  
+
           // Calculate temporal X, use absolute value.
           float xx = xy_distance * sin_rot_angle - horiz_offset * cos_rot_angle;
           // Calculate temporal Y, use absolute value
           float yy = xy_distance * cos_rot_angle + horiz_offset * sin_rot_angle;
           if (xx < 0) xx=-xx;
           if (yy < 0) yy=-yy;
-    
+
           // Get 2points calibration values,Linear interpolation to get distance
           // correction for X and Y, that means distance correction use
           // different value at different distance
           float distance_corr_x = 0;
           float distance_corr_y = 0;
           if (corrections.two_pt_correction_available) {
-            distance_corr_x = 
+            distance_corr_x =
               (corrections.dist_correction - corrections.dist_correction_x)
-                * (xx - 2.4) / (25.04 - 2.4) 
+                * (xx - 2.4) / (25.04 - 2.4)
               + corrections.dist_correction_x;
             distance_corr_x -= corrections.dist_correction;
-            distance_corr_y = 
+            distance_corr_y =
               (corrections.dist_correction - corrections.dist_correction_y)
                 * (yy - 1.93) / (25.04 - 1.93)
               + corrections.dist_correction_y;
             distance_corr_y -= corrections.dist_correction;
           }
-  
+
           float distance_x = distance + distance_corr_x;
           /**the new term of 'vert_offset * sin_vert_angle'
            * was added to the expression due to the mathemathical
@@ -272,7 +310,7 @@ inline float SQR(float val) { return val*val; }
           xy_distance = distance_x * cos_vert_angle - vert_offset * sin_vert_angle ;
           ///the expression wiht '-' is proved to be better than the one with '+'
           x = xy_distance * sin_rot_angle - horiz_offset * cos_rot_angle;
-  
+
           float distance_y = distance + distance_corr_y;
           xy_distance = distance_y * cos_vert_angle - vert_offset * sin_vert_angle ;
           /**the new term of 'vert_offset * sin_vert_angle'
@@ -280,7 +318,7 @@ inline float SQR(float val) { return val*val; }
            * model we used.
            */
           y = xy_distance * cos_rot_angle + horiz_offset * sin_rot_angle;
-  
+
           // Using distance_y is not symmetric, but the velodyne manual
           // does this.
           /**the new term of 'vert_offset * cos_vert_angle'
@@ -288,34 +326,40 @@ inline float SQR(float val) { return val*val; }
            * model we used.
            */
           z = distance_y * sin_vert_angle + vert_offset*cos_vert_angle;
-  
+
           /** Use standard ROS coordinate system (right-hand rule) */
           float x_coord = y;
           float y_coord = -x;
           float z_coord = z;
-  
+
           /** Intensity Calculation */
-  
+
           float min_intensity = corrections.min_intensity;
           float max_intensity = corrections.max_intensity;
-  
+
           intensity = raw->blocks[i].data[k+2];
-  
-          float focal_offset = 256 
-                             * (1 - corrections.focal_distance / 13100) 
+
+          float focal_offset = 256
+                             * (1 - corrections.focal_distance / 13100)
                              * (1 - corrections.focal_distance / 13100);
           float focal_slope = corrections.focal_slope;
-          intensity += focal_slope * (std::abs(focal_offset - 256 * 
+          intensity += focal_slope * (std::abs(focal_offset - 256 *
             SQR(1 - static_cast<float>(tmp.uint)/65535)));
           intensity = (intensity < min_intensity) ? min_intensity : intensity;
           intensity = (intensity > max_intensity) ? max_intensity : intensity;
-  
-          data.addPoint(x_coord, y_coord, z_coord, corrections.laser_ring, raw->blocks[i].rotation, distance, intensity);
+
+          double time_stamp = i * 55.296 / 1000.0 / 1000.0 + j * 2.304 / 1000.0 / 1000.0 + pkt.stamp.toSec();
+          if (is_invalid_distance) {
+            data.addPoint(x_coord, y_coord, z_coord, corrections.laser_ring, raw->blocks[i].rotation, 0, intensity, time_stamp);
+          }
+          else {
+              data.addPoint(x_coord, y_coord, z_coord, corrections.laser_ring, raw->blocks[i].rotation, distance, intensity, time_stamp);
+          }
         }
       }
     }
   }
-  
+
   /** @brief convert raw VLP16 packet to point cloud
    *
    *  @param pkt raw packet to unpack
@@ -326,7 +370,7 @@ inline float SQR(float val) { return val*val; }
     float azimuth;
     float azimuth_diff;
     int raw_azimuth_diff;
-    float last_azimuth_diff=0;
+    static float last_azimuth_diff=0;
     float azimuth_corrected_f;
     int azimuth_corrected;
     float x, y, z;
@@ -349,22 +393,22 @@ inline float SQR(float val) { return val*val; }
       // Calculate difference between current and next block's azimuth angle.
       azimuth = (float)(raw->blocks[block].rotation);
       if (block < (BLOCKS_PER_PACKET-1)){
-	raw_azimuth_diff = raw->blocks[block+1].rotation - raw->blocks[block].rotation;
+	    raw_azimuth_diff = raw->blocks[block+1].rotation - raw->blocks[block].rotation;
         azimuth_diff = (float)((36000 + raw_azimuth_diff)%36000);
-	// some packets contain an angle overflow where azimuth_diff < 0 
-	if(raw_azimuth_diff < 0)//raw->blocks[block+1].rotation - raw->blocks[block].rotation < 0)
-	  {
-	    ROS_WARN_STREAM_THROTTLE(60, "Packet containing angle overflow, first angle: " << raw->blocks[block].rotation << " second angle: " << raw->blocks[block+1].rotation);
-	    // if last_azimuth_diff was not zero, we can assume that the velodyne's speed did not change very much and use the same difference
-	    if(last_azimuth_diff > 0){
-	      azimuth_diff = last_azimuth_diff;
-	    }
-	    // otherwise we are not able to use this data
-	    // TODO: we might just not use the second 16 firings
-	    else{
-	      continue;
-	    }
-	  }
+	// // some packets contain an angle overflow where azimuth_diff < 0
+	// if(raw_azimuth_diff < 0)//raw->blocks[block+1].rotation - raw->blocks[block].rotation < 0)
+	//   {
+	//     ROS_WARN_STREAM_THROTTLE(60, "Packet containing angle overflow, first angle: " << raw->blocks[block].rotation << " second angle: " << raw->blocks[block+1].rotation);
+	//     // if last_azimuth_diff was not zero, we can assume that the velodyne's speed did not change very much and use the same difference
+	//     if(last_azimuth_diff > 0){
+	//       azimuth_diff = last_azimuth_diff;
+	//     }
+	//     // otherwise we are not able to use this data
+	//     // TODO: we might just not use the second 16 firings
+	//     else{
+	//       continue;
+	//     }
+	//   }
         last_azimuth_diff = azimuth_diff;
       }else{
         azimuth_diff = last_azimuth_diff;
@@ -378,79 +422,86 @@ inline float SQR(float val) { return val*val; }
           union two_bytes tmp;
           tmp.bytes[0] = raw->blocks[block].data[k];
           tmp.bytes[1] = raw->blocks[block].data[k+1];
-          
-          float distance = tmp.uint * calibration_.distance_resolution_m;
-          distance += corrections.dist_correction;
+
+          // float distance = tmp.uint * calibration_.distance_resolution_m;
+          // distance += corrections.dist_correction;
 
           // skip the point if out of range
-          if ( !pointInRange(distance)) continue;
+          //if ( !pointInRange(distance)) continue;
 
           /** correct for the laser rotation as a function of timing during the firings **/
           azimuth_corrected_f = azimuth + (azimuth_diff * ((dsr*VLP16_DSR_TOFFSET) + (firing*VLP16_FIRING_TOFFSET)) / VLP16_BLOCK_TDURATION);
           azimuth_corrected = ((int)round(azimuth_corrected_f)) % 36000;
-                 
+
           /*condition added to avoid calculating points which are not
             in the interesting defined area (min_angle < area < max_angle)*/
-          if ((azimuth_corrected >= config_.min_angle 
-               && azimuth_corrected <= config_.max_angle 
+          if ((azimuth_corrected >= config_.min_angle
+               && azimuth_corrected <= config_.max_angle
                && config_.min_angle < config_.max_angle)
-               ||(config_.min_angle > config_.max_angle 
-               && (azimuth_corrected <= config_.max_angle 
-               || azimuth_corrected >= config_.min_angle))){
+               ||(config_.min_angle > config_.max_angle
+               && (azimuth_corrected <= config_.max_angle
+               || azimuth_corrected >= config_.min_angle))) {
 
             // convert polar coordinates to Euclidean XYZ
             float distance = tmp.uint * calibration_.distance_resolution_m;
-            distance += corrections.dist_correction;
-            
+						bool is_invalid_distance = false;
+            if(distance == 0.0) {
+                is_invalid_distance = true;
+                distance = 0.3;
+            }
+						else {
+							distance += corrections.dist_correction;
+						}
+
             float cos_vert_angle = corrections.cos_vert_correction;
             float sin_vert_angle = corrections.sin_vert_correction;
             float cos_rot_correction = corrections.cos_rot_correction;
             float sin_rot_correction = corrections.sin_rot_correction;
-    
+
             // cos(a-b) = cos(a)*cos(b) + sin(a)*sin(b)
             // sin(a-b) = sin(a)*cos(b) - cos(a)*sin(b)
-            float cos_rot_angle = 
-              cos_rot_table_[azimuth_corrected] * cos_rot_correction + 
+            float cos_rot_angle =
+              cos_rot_table_[azimuth_corrected] * cos_rot_correction +
               sin_rot_table_[azimuth_corrected] * sin_rot_correction;
-            float sin_rot_angle = 
-              sin_rot_table_[azimuth_corrected] * cos_rot_correction - 
+            float sin_rot_angle =
+              sin_rot_table_[azimuth_corrected] * cos_rot_correction -
               cos_rot_table_[azimuth_corrected] * sin_rot_correction;
-    
+
             float horiz_offset = corrections.horiz_offset_correction;
             float vert_offset = corrections.vert_offset_correction;
-    
+
             // Compute the distance in the xy plane (w/o accounting for rotation)
             /**the new term of 'vert_offset * sin_vert_angle'
              * was added to the expression due to the mathemathical
              * model we used.
              */
             float xy_distance = distance * cos_vert_angle - vert_offset * sin_vert_angle;
-    
+
             // Calculate temporal X, use absolute value.
             float xx = xy_distance * sin_rot_angle - horiz_offset * cos_rot_angle;
             // Calculate temporal Y, use absolute value
             float yy = xy_distance * cos_rot_angle + horiz_offset * sin_rot_angle;
             if (xx < 0) xx=-xx;
             if (yy < 0) yy=-yy;
-      
+
             // Get 2points calibration values,Linear interpolation to get distance
             // correction for X and Y, that means distance correction use
             // different value at different distance
             float distance_corr_x = 0;
             float distance_corr_y = 0;
             if (corrections.two_pt_correction_available) {
-              distance_corr_x = 
+              distance_corr_x =
                 (corrections.dist_correction - corrections.dist_correction_x)
-                  * (xx - 2.4) / (25.04 - 2.4) 
+                  * (xx - 2.4) / (25.04 - 2.4)
                 + corrections.dist_correction_x;
               distance_corr_x -= corrections.dist_correction;
-              distance_corr_y = 
+              distance_corr_y =
                 (corrections.dist_correction - corrections.dist_correction_y)
                   * (yy - 1.93) / (25.04 - 1.93)
                 + corrections.dist_correction_y;
               distance_corr_y -= corrections.dist_correction;
             }
-    
+
             float distance_x = distance + distance_corr_x;
             /**the new term of 'vert_offset * sin_vert_angle'
              * was added to the expression due to the mathemathical
@@ -458,7 +509,7 @@ inline float SQR(float val) { return val*val; }
              */
             xy_distance = distance_x * cos_vert_angle - vert_offset * sin_vert_angle ;
             x = xy_distance * sin_rot_angle - horiz_offset * cos_rot_angle;
-    
+
             float distance_y = distance + distance_corr_y;
             /**the new term of 'vert_offset * sin_vert_angle'
              * was added to the expression due to the mathemathical
@@ -466,7 +517,7 @@ inline float SQR(float val) { return val*val; }
              */
             xy_distance = distance_y * cos_vert_angle - vert_offset * sin_vert_angle ;
             y = xy_distance * cos_rot_angle + horiz_offset * sin_rot_angle;
-    
+
             // Using distance_y is not symmetric, but the velodyne manual
             // does this.
             /**the new term of 'vert_offset * cos_vert_angle'
@@ -474,31 +525,37 @@ inline float SQR(float val) { return val*val; }
              * model we used.
              */
             z = distance_y * sin_vert_angle + vert_offset*cos_vert_angle;
-  
-    
+
+
             /** Use standard ROS coordinate system (right-hand rule) */
             float x_coord = y;
             float y_coord = -x;
             float z_coord = z;
-    
+
             /** Intensity Calculation */
             float min_intensity = corrections.min_intensity;
             float max_intensity = corrections.max_intensity;
-    
+
             intensity = raw->blocks[block].data[k+2];
-    
+
             float focal_offset = 256 * SQR(1 - corrections.focal_distance / 13100);
             float focal_slope = corrections.focal_slope;
-            intensity += focal_slope * (std::abs(focal_offset - 256 * 
+            intensity += focal_slope * (std::abs(focal_offset - 256 *
               SQR(1 - tmp.uint/65535)));
             intensity = (intensity < min_intensity) ? min_intensity : intensity;
             intensity = (intensity > max_intensity) ? max_intensity : intensity;
-    
-            data.addPoint(x_coord, y_coord, z_coord, corrections.laser_ring, azimuth_corrected, distance, intensity);
+						
+						double time_stamp = (block*2 + firing) * 55.296 / 1000.0 / 1000.0 + dsr * 2.304 / 1000.0 / 1000.0 + pkt.stamp.toSec();
+						if (is_invalid_distance) {
+              data.addPoint(x_coord, y_coord, z_coord, corrections.laser_ring, azimuth_corrected, 0, intensity, time_stamp);
+            }
+            else {
+              data.addPoint(x_coord, y_coord, z_coord, corrections.laser_ring, azimuth_corrected, distance, intensity, time_stamp);
+            }
           }
         }
       }
     }
-  }  
+  }
 
 } // namespace velodyne_rawdata

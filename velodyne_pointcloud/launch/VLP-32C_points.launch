@@ -19,6 +19,8 @@
   <arg name="laserscan_ring" default="-1" />
   <arg name="laserscan_resolution" default="0.007" />
 
+  <group ns="velodyne_front_center">
+
   <!-- start nodelet manager and driver nodelets -->
   <include file="$(find velodyne_driver)/launch/nodelet_manager.launch">
     <arg name="device_ip" value="$(arg device_ip)"/>
@@ -47,5 +49,5 @@
     <arg name="ring" value="$(arg laserscan_ring)"/>
     <arg name="resolution" value="$(arg laserscan_resolution)"/>
   </include>
-
+  </group>
 </launch>

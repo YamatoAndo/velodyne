@@ -13,70 +13,205 @@
 
 */
 
-#include "velodyne_pointcloud/convert.h"
+#include <velodyne_pointcloud/convert.h>
+
+#include <tf/tf.h>
 
 #include <pcl_conversions/pcl_conversions.h>
+#include <velodyne_pointcloud/pointcloudXYZIRADT.h>
+
+#include <yaml-cpp/yaml.h>
+
+#include <velodyne_pointcloud/func.h>
 
 namespace velodyne_pointcloud
 {
   /** @brief Constructor. */
-  Convert::Convert(ros::NodeHandle node, ros::NodeHandle private_nh):
-    data_(new velodyne_rawdata::RawData())
+  Convert::Convert(ros::NodeHandle node, ros::NodeHandle private_nh)
+    : tf2_listener_(tf2_buffer_)
+    , data_(new velodyne_rawdata::RawData())
+    , num_points_thresthold_(300)
+    , base_link_frame_("base_link")
   {
+
+    ROS_WARN("This node is debugged only VLP16 and VLP32C. Please dont use other models");
+
     data_->setup(private_nh);
 
+    private_nh.getParam("num_points_thresthold", num_points_thresthold_);
+
+    std::string invalid_intensity;
+    private_nh.getParam("invalid_intensity", invalid_intensity);
+    YAML::Node topics = YAML::Load(invalid_intensity);
+    invalid_intensity_array_ = std::vector<float>(data_->getNumLasers(), 0);
+    for(size_t i = 0; i < topics.size(); ++i) {
+        invalid_intensity_array_.at(i) = topics[i].as<float>();
+    }
 
     // advertise output point cloud (before subscribing to input data)
-    output_ =
-      node.advertise<sensor_msgs::PointCloud2>("velodyne_points", 10);
-      
-    srv_ = boost::make_shared <dynamic_reconfigure::Server<velodyne_pointcloud::
-      CloudNodeConfig> > (private_nh);
-    dynamic_reconfigure::Server<velodyne_pointcloud::CloudNodeConfig>::
-      CallbackType f;
+    velodyne_points_pub_ = node.advertise<sensor_msgs::PointCloud2>("velodyne_points", 10);
+    velodyne_points_transed_pub_ = node.advertise<sensor_msgs::PointCloud2>("velodyne_points_transed", 10);
+    velodyne_points_invalid_near_pub_ = node.advertise<sensor_msgs::PointCloud2>("velodyne_points_invalid_near", 10);
+    velodyne_points_combined_pub_ = node.advertise<sensor_msgs::PointCloud2>("velodyne_points_combined", 10);
+    marker_array_pub_ = node.advertise<visualization_msgs::MarkerArray>("velodyne_model_marker", 1);
+    srv_ = boost::make_shared <dynamic_reconfigure::Server<velodyne_pointcloud::CloudNodeConfig> > (private_nh);
+    dynamic_reconfigure::Server<velodyne_pointcloud::CloudNodeConfig>::CallbackType f;
     f = boost::bind (&Convert::callback, this, _1, _2);
     srv_->setCallback (f);
 
     // subscribe to VelodyneScan packets
-    velodyne_scan_ =
-      node.subscribe("velodyne_packets", 10,
-                     &Convert::processScan, (Convert *) this,
-                     ros::TransportHints().tcpNoDelay(true));
+    twist_sub_ = node.subscribe("/can_twist", 10, &Convert::processTwist, (Convert *) this, ros::TransportHints().tcpNoDelay(true));
+    velodyne_scan_ = node.subscribe("/velodyne_packets", 10, &Convert::processScan, (Convert *) this, ros::TransportHints().tcpNoDelay(true));
   }
   
-  void Convert::callback(velodyne_pointcloud::CloudNodeConfig &config,
-                uint32_t level)
+  void Convert::callback(velodyne_pointcloud::CloudNodeConfig &config, uint32_t level)
   {
-  ROS_INFO("Reconfigure Request");
-  data_->setParameters(config.min_range, config.max_range, config.view_direction,
-                       config.view_width);
+  	ROS_INFO("Reconfigure Request");
+  	data_->setParameters(config.min_range, config.max_range, config.view_direction, config.view_width);
+  }
+
+  void Convert::processTwist(const geometry_msgs::TwistStamped::ConstPtr &twist_msg)
+  {
+    twist_queue_.push_back(*twist_msg);
+
+    while(!twist_queue_.empty()) {
+      //for replay rosbag
+      if(twist_queue_.front().header.stamp > twist_msg->header.stamp) {
+        twist_queue_.pop_front();
+      }
+      else if(twist_queue_.front().header.stamp < twist_msg->header.stamp - ros::Duration(1.0)) {
+        twist_queue_.pop_front();
+      }
+      else {
+        break;
+      }
+    }
   }
 
   /** @brief Callback for raw scan messages. */
   void Convert::processScan(const velodyne_msgs::VelodyneScan::ConstPtr &scanMsg)
   {
-    if (output_.getNumSubscribers() == 0)         // no one listening?
-      return;                                     // avoid much work
 
-    // allocate a point cloud with same time and frame ID as raw data
-    PointcloudXYZIR outMsg;
-    // outMsg's header is a pcl::PCLHeader, convert it before stamp assignment
-    outMsg.pc->header.stamp = pcl_conversions::toPCL(scanMsg->header).stamp;
-    outMsg.pc->header.frame_id = scanMsg->header.frame_id;
-    outMsg.pc->height = 1;
-
-    outMsg.pc->points.reserve(scanMsg->packets.size() * data_->scansPerPacket());
-
-    // process each packet provided by the driver
-    for (size_t i = 0; i < scanMsg->packets.size(); ++i)
-    {
-      data_->unpack(scanMsg->packets[i], outMsg);
+    velodyne_pointcloud::PointcloudXYZIRADT scan_points_xyziradt;
+    if(velodyne_points_pub_.getNumSubscribers() > 0 || velodyne_points_transed_pub_.getNumSubscribers() > 0 || velodyne_points_invalid_near_pub_.getNumSubscribers() > 0 || velodyne_points_combined_pub_.getNumSubscribers() > 0) {
+      scan_points_xyziradt.pc->points.reserve(scanMsg->packets.size() * data_->scansPerPacket());
+      for (size_t i = 0; i < scanMsg->packets.size(); ++i) {
+        data_->unpack(scanMsg->packets[i], scan_points_xyziradt);
+      }
+      scan_points_xyziradt.pc->header = pcl_conversions::toPCL(scanMsg->header);
+      scan_points_xyziradt.pc->height = 1;
+      scan_points_xyziradt.pc->width = scan_points_xyziradt.pc->points.size();
     }
 
-    // publish the accumulated cloud message
-    ROS_DEBUG_STREAM("Publishing " << outMsg.pc->height * outMsg.pc->width
-                     << " Velodyne points, time: " << outMsg.pc->header.stamp);
-    output_.publish(outMsg.pc);
+    pcl::PointCloud<velodyne_pointcloud::PointXYZIRADT>::Ptr valid_points_xyziradt(new pcl::PointCloud<velodyne_pointcloud::PointXYZIRADT>);
+    if(velodyne_points_pub_.getNumSubscribers() > 0 || velodyne_points_transed_pub_.getNumSubscribers() > 0 || velodyne_points_combined_pub_.getNumSubscribers() > 0) {
+      valid_points_xyziradt = extractValidPoints(scan_points_xyziradt.pc, data_->getMinRange(), data_->getMaxRange());
+      if(velodyne_points_pub_.getNumSubscribers() > 0) {
+        const auto valid_points_xyzir = convert(valid_points_xyziradt);
+        velodyne_points_pub_.publish(valid_points_xyzir);
+      }
+    }
+
+    pcl::PointCloud<velodyne_pointcloud::PointXYZIR>::Ptr interpotate_valid_points_xyzir(new pcl::PointCloud<velodyne_pointcloud::PointXYZIR>);
+    if(velodyne_points_transed_pub_.getNumSubscribers() > 0  || velodyne_points_combined_pub_.getNumSubscribers() > 0) {
+      tf2::Transform tf2_base_link_to_sensor;
+      getTransform(base_link_frame_, valid_points_xyziradt->header.frame_id, &tf2_base_link_to_sensor);
+      interpotate_valid_points_xyzir = interpotate(valid_points_xyziradt, twist_queue_, tf2_base_link_to_sensor);
+      if(velodyne_points_transed_pub_.getNumSubscribers() > 0) {
+        velodyne_points_transed_pub_.publish(interpotate_valid_points_xyzir);
+      }
+    }
+
+    pcl::PointCloud<velodyne_pointcloud::PointXYZIR>::Ptr invalid_near_points_filtered_xyzir(new pcl::PointCloud<velodyne_pointcloud::PointXYZIR>);
+    if(velodyne_points_invalid_near_pub_.getNumSubscribers() > 0 || velodyne_points_combined_pub_.getNumSubscribers() > 0) {
+      const size_t num_lasers = data_->getNumLasers();
+      const auto sorted_invalid_points_xyziradt = sortZeroIndex(scan_points_xyziradt.pc, num_lasers);
+      const auto invalid_near_points_filtered_xyzir = extractInvalidNearPointsFiltered(sorted_invalid_points_xyziradt, invalid_intensity_array_, num_lasers, num_points_thresthold_);
+      if(velodyne_points_invalid_near_pub_.getNumSubscribers() > 0) {
+        velodyne_points_invalid_near_pub_.publish(invalid_near_points_filtered_xyzir);
+      }
+    }
+
+    pcl::PointCloud<velodyne_pointcloud::PointXYZIR>::Ptr combined_points_xyzir(new pcl::PointCloud<velodyne_pointcloud::PointXYZIR>);
+    if(velodyne_points_combined_pub_.getNumSubscribers() > 0) {
+      combined_points_xyzir->points.reserve(interpotate_valid_points_xyzir->points.size()+invalid_near_points_filtered_xyzir->points.size());
+      combined_points_xyzir->points.insert(std::end(combined_points_xyzir->points), std::begin(interpotate_valid_points_xyzir->points), std::end(interpotate_valid_points_xyzir->points));
+      combined_points_xyzir->points.insert(std::end(combined_points_xyzir->points), std::begin(invalid_near_points_filtered_xyzir->points), std::end(invalid_near_points_filtered_xyzir->points));
+      combined_points_xyzir->header = pcl_conversions::toPCL(scanMsg->header);
+      combined_points_xyzir->height = 1;
+      combined_points_xyzir->width = combined_points_xyzir->points.size();
+      velodyne_points_combined_pub_.publish(combined_points_xyzir);
+    }
+
+    if(marker_array_pub_.getNumSubscribers() > 0) {
+      const auto velodyne_model_marker = createVelodyneModelMakerMsg(scanMsg->header);
+      marker_array_pub_.publish(velodyne_model_marker);
+    }
+  }
+
+  visualization_msgs::MarkerArray Convert::createVelodyneModelMakerMsg(const std_msgs::Header& header)
+  {
+    visualization_msgs::MarkerArray marker_array_msg;
+  
+    auto generateColor = [](float r, float g, float b, float a){
+      std_msgs::ColorRGBA color;
+      color.r = r;
+      color.g = g;
+      color.b = b;
+      color.a = a;
+      return color;
+    };
+  
+    const double radius = 0.1033;
+    const std::array<double, 3> height = {0.020, 0.037, 0.015};
+    const std::array<double, 3> pos_z = {-0.0285, 0.0, 0.0255};
+    const std::array<std_msgs::ColorRGBA, 3> color = {generateColor(0.8, 0.8, 0.8, 0.8), generateColor(0.1, 0.1, 0.1, 0.98), generateColor(0.8, 0.8, 0.8, 0.8)};
+    
+    geometry_msgs::Quaternion orientation_msg;
+    quaternionTFToMsg(tf::createQuaternionFromRPY(0, 0, 0), orientation_msg);
+  
+    for(size_t i = 0; i < 3; ++i){
+      visualization_msgs::Marker marker;
+      marker.header = header;
+      marker.ns = std::string(header.frame_id)+"_velodyne_model";
+      marker.id = i;
+      marker.type = visualization_msgs::Marker::CYLINDER;
+      marker.action = visualization_msgs::Marker::ADD;
+      marker.pose.position.x = 0;
+      marker.pose.position.y = 0;
+      marker.pose.position.z = pos_z[i];
+      marker.pose.orientation = orientation_msg;
+      marker.scale.x = radius;
+      marker.scale.y = radius;
+      marker.scale.z = height[i];
+      marker.color = color[i];
+      marker_array_msg.markers.push_back(marker);
+    }
+  
+    return marker_array_msg;
+  }
+
+  bool Convert::getTransform(const std::string &target_frame, const std::string &source_frame, tf2::Transform *tf2_transform_ptr)
+  {
+    if(target_frame == source_frame) {
+      tf2_transform_ptr->setOrigin(tf2::Vector3(0, 0, 0));
+      tf2_transform_ptr->setRotation(tf2::Quaternion(0, 0, 0 ,1));
+      return true;
+    }
+
+    try {
+      const auto transform_msg = tf2_buffer_.lookupTransform(target_frame, source_frame, ros::Time(0), ros::Duration(1.0));
+      tf2::convert(transform_msg.transform, *tf2_transform_ptr);
+    }
+    catch (tf2::TransformException &ex) {
+      ROS_WARN("%s", ex.what());
+      ROS_ERROR("Please publish TF %s to %s", target_frame.c_str(), source_frame.c_str());
+
+      tf2_transform_ptr->setOrigin(tf2::Vector3(0, 0, 0));
+      tf2_transform_ptr->setRotation(tf2::Quaternion(0, 0, 0 ,1));
+      return false;
+    }
+    return true;
   }
 
 } // namespace velodyne_pointcloud

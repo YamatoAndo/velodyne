@@ -25,10 +25,15 @@
   <depend>roslib</depend>
   <depend>sensor_msgs</depend>
   <depend>tf</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
   <depend>velodyne_driver</depend>
   <depend>velodyne_msgs</depend>
   <depend>yaml-cpp</depend>
   <depend>dynamic_reconfigure</depend>
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
 
   <exec_depend>velodyne_laserscan</exec_depend>
 
