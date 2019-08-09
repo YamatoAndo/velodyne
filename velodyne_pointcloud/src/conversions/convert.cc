@@ -48,7 +48,7 @@ namespace velodyne_pointcloud
         invalid_intensity_array_.at(i) = topics[i].as<float>();
     }
 
-    // advertise output point cloud (before subscribing to input data)
+    // advertise
     velodyne_points_pub_ = node.advertise<sensor_msgs::PointCloud2>("velodyne_points", 10);
     velodyne_points_transed_pub_ = node.advertise<sensor_msgs::PointCloud2>("velodyne_points_transed", 10);
     velodyne_points_invalid_near_pub_ = node.advertise<sensor_msgs::PointCloud2>("velodyne_points_invalid_near", 10);
@@ -59,9 +59,9 @@ namespace velodyne_pointcloud
     f = boost::bind (&Convert::callback, this, _1, _2);
     srv_->setCallback (f);
 
-    // subscribe to VelodyneScan packets
+    // subscribe
     twist_sub_ = node.subscribe("/can_twist", 10, &Convert::processTwist, (Convert *) this, ros::TransportHints().tcpNoDelay(true));
-    velodyne_scan_ = node.subscribe("/velodyne_packets", 10, &Convert::processScan, (Convert *) this, ros::TransportHints().tcpNoDelay(true));
+    velodyne_scan_ = node.subscribe("velodyne_packets", 10, &Convert::processScan, (Convert *) this, ros::TransportHints().tcpNoDelay(true));
   }
   
   void Convert::callback(velodyne_pointcloud::CloudNodeConfig &config, uint32_t level)
