@@ -17,6 +17,7 @@
 #include <velodyne_pointcloud/func.h>
 
 #include <algorithm>
+#include <iterator>
 
 #include <opencv2/opencv.hpp>
 
@@ -153,16 +154,25 @@ namespace velodyne_pointcloud
     pcl::PointCloud<velodyne_pointcloud::PointXYZIR>::Ptr output_pointcloud(new pcl::PointCloud<velodyne_pointcloud::PointXYZIR>);
     output_pointcloud->reserve(input_pointcloud->points.size());
 
-    double theta = 0;
-    tf2::Vector3 transed_tf_point(0, 0, 0);
     velodyne_pointcloud::PointXYZIR point;
-
-    if(input_pointcloud->points.empty()) {
+    if(input_pointcloud->points.empty() || twist_queue.empty()) {
+      ROS_WARN_STREAM_THROTTLE(10, "input_pointcloud->points or twist_queue is empty.");
+      for(const auto& p : input_pointcloud->points) {
+        point.x = p.x;
+        point.y = p.y;
+        point.z = p.z;
+        point.intensity = p.intensity;
+        point.ring = p.ring;
+        output_pointcloud->points.push_back(point);
+      }
       output_pointcloud->header = input_pointcloud->header;
       output_pointcloud->height = 1;
       output_pointcloud->width = output_pointcloud->points.size();
       return output_pointcloud;
     }
+
+    double theta = 0;
+    tf2::Vector3 transed_tf_point(0, 0, 0);
 
     auto twist_it = std::lower_bound(std::begin(twist_queue), std::end(twist_queue), ros::Time(input_pointcloud->points.front().time_stamp),
       [](const geometry_msgs::TwistStamped &x, ros::Time t) {
