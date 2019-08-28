@@ -126,7 +126,7 @@ namespace velodyne_pointcloud
     if(velodyne_points_invalid_near_pub_.getNumSubscribers() > 0 || velodyne_points_combined_pub_.getNumSubscribers() > 0) {
       const size_t num_lasers = data_->getNumLasers();
       const auto sorted_invalid_points_xyziradt = sortZeroIndex(scan_points_xyziradt.pc, num_lasers);
-      const auto invalid_near_points_filtered_xyzir = extractInvalidNearPointsFiltered(sorted_invalid_points_xyziradt, invalid_intensity_array_, num_lasers, num_points_thresthold_);
+      invalid_near_points_filtered_xyzir = extractInvalidNearPointsFiltered(sorted_invalid_points_xyziradt, invalid_intensity_array_, num_lasers, num_points_thresthold_);
       if(velodyne_points_invalid_near_pub_.getNumSubscribers() > 0) {
         velodyne_points_invalid_near_pub_.publish(invalid_near_points_filtered_xyzir);
       }
