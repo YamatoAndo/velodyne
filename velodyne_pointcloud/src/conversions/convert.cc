@@ -151,8 +151,28 @@ namespace velodyne_pointcloud
 
   visualization_msgs::MarkerArray Convert::createVelodyneModelMakerMsg(const std_msgs::Header& header)
   {
-    visualization_msgs::MarkerArray marker_array_msg;
-  
+    auto generatePoint = [](double x, double y, double z){
+      geometry_msgs::Point point;
+      point.x = x;
+      point.y = y;
+      point.z = z;
+      return point;
+    };
+
+    auto generateQuaternion = [](double roll, double pitch, double yaw){
+      geometry_msgs::Quaternion quta;
+      quaternionTFToMsg(tf::createQuaternionFromRPY(roll, pitch, yaw), quta);
+      return quta;
+    };
+
+    auto generateVector3 = [](double x, double y, double z){
+      geometry_msgs::Vector3 vec;
+      vec.x = x;
+      vec.y = y;
+      vec.z = z;
+      return vec;
+    };
+    
     auto generateColor = [](float r, float g, float b, float a){
       std_msgs::ColorRGBA color;
       color.r = r;
@@ -162,28 +182,24 @@ namespace velodyne_pointcloud
       return color;
     };
   
+    //array[0]:bottom body, array[1]:middle body(laser window), array[2]: top body, array[3]:cable
     const double radius = 0.1033;
-    const std::array<double, 3> height = {0.020, 0.037, 0.015};
-    const std::array<double, 3> pos_z = {-0.0285, 0.0, 0.0255};
-    const std::array<std_msgs::ColorRGBA, 3> color = {generateColor(0.8, 0.8, 0.8, 0.8), generateColor(0.1, 0.1, 0.1, 0.98), generateColor(0.8, 0.8, 0.8, 0.8)};
+    const std::array<geometry_msgs::Point, 4> pos = {generatePoint(0.0, 0.0, -0.0285), generatePoint(0.0, 0.0, 0.0), generatePoint(0.0, 0.0, 0.0255), generatePoint(-radius/2.0-0.005, 0.0, -0.03)};
+    const std::array<geometry_msgs::Quaternion, 4> quta = {generateQuaternion(0.0, 0.0, 0.0), generateQuaternion(0.0, 0.0, 0.0), generateQuaternion(0.0, 0.0, 0.0), generateQuaternion(0.0, M_PI_2, 0.0)};
+    const std::array<geometry_msgs::Vector3, 4> scale = {generateVector3(radius, radius, 0.020), generateVector3(radius, radius, 0.037), generateVector3(radius, radius, 0.015), generateVector3(0.0127, 0.0127, 0.02)};
+    const std::array<std_msgs::ColorRGBA, 4> color = {generateColor(0.85, 0.85, 0.85, 0.85), generateColor(0.1, 0.1, 0.1, 0.98), generateColor(0.85, 0.85, 0.85, 0.85), generateColor(0.2, 0.2, 0.2, 0.98)};
     
-    geometry_msgs::Quaternion orientation_msg;
-    quaternionTFToMsg(tf::createQuaternionFromRPY(0, 0, 0), orientation_msg);
-  
-    for(size_t i = 0; i < 3; ++i){
+    visualization_msgs::MarkerArray marker_array_msg;
+    for(size_t i = 0; i < 4; ++i){
       visualization_msgs::Marker marker;
       marker.header = header;
       marker.ns = std::string(header.frame_id)+"_velodyne_model";
       marker.id = i;
       marker.type = visualization_msgs::Marker::CYLINDER;
       marker.action = visualization_msgs::Marker::ADD;
-      marker.pose.position.x = 0;
-      marker.pose.position.y = 0;
-      marker.pose.position.z = pos_z[i];
-      marker.pose.orientation = orientation_msg;
-      marker.scale.x = radius;
-      marker.scale.y = radius;
-      marker.scale.z = height[i];
+      marker.pose.position = pos[i];
+      marker.pose.orientation = quta[i];
+      marker.scale = scale[i];
       marker.color = color[i];
       marker_array_msg.markers.push_back(marker);
     }
