@@ -18,6 +18,8 @@
   <arg name="rpm" default="600.0" />
   <arg name="laserscan_ring" default="-1" />
   <arg name="laserscan_resolution" default="0.007" />
+  <arg name="num_points_thresthold" default="300"/>
+  <arg name="invalid_intensity" default="[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"/>
 
   <!-- start nodelet manager and driver nodelets -->
   <include file="$(find velodyne_driver)/launch/nodelet_manager.launch">
@@ -39,6 +41,8 @@
     <arg name="manager" value="$(arg manager)" />
     <arg name="max_range" value="$(arg max_range)"/>
     <arg name="min_range" value="$(arg min_range)"/>
+    <arg name="num_points_thresthold" value="$(arg num_points_thresthold)"/>
+    <arg name="invalid_intensity" value="$(arg invalid_intensity)"/>
   </include>
 
   <!-- start laserscan nodelet -->
