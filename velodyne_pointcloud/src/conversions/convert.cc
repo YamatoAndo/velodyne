@@ -60,7 +60,7 @@ namespace velodyne_pointcloud
     srv_->setCallback (f);
 
     // subscribe
-    twist_sub_ = node.subscribe("/can_twist", 10, &Convert::processTwist, (Convert *) this, ros::TransportHints().tcpNoDelay(true));
+    twist_sub_ = node.subscribe("/vehicle/twist", 10, &Convert::processTwist, (Convert *) this, ros::TransportHints().tcpNoDelay(true));
     velodyne_scan_ = node.subscribe("velodyne_packets", 10, &Convert::processScan, (Convert *) this, ros::TransportHints().tcpNoDelay(true));
   }
   

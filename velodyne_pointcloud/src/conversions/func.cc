@@ -172,7 +172,7 @@ namespace velodyne_pointcloud
     }
 
     double theta = 0;
-    tf2::Vector3 transed_tf_point(0, 0, 0);
+    double x = 0, y = 0;
 
     auto twist_it = std::lower_bound(std::begin(twist_queue), std::end(twist_queue), ros::Time(input_pointcloud->points.front().time_stamp),
       [](const geometry_msgs::TwistStamped &x, ros::Time t) {
@@ -198,19 +198,31 @@ namespace velodyne_pointcloud
       static double prev_time_stamp = p.time_stamp;
       const double time_offset = p.time_stamp - prev_time_stamp;
 
-      theta += w * time_offset;
-      tf2::Quaternion quat;
-      quat.setRPY(0.0, 0.0,theta);
-      quat = quat*tf2_base_link_to_sensor.getRotation().inverse();
+      tf2::Vector3 sensorTF_point(p.x, p.y, p.z);
 
-      tf2::Transform trans;
-      trans.setOrigin(tf2::Vector3(0, 0, 0));
-      trans.setRotation(quat);
-      tf2::Vector3 tf_point(v*time_offset, 0, 0);
-      transed_tf_point += trans * tf_point;
-      point.x = p.x + transed_tf_point.getX();
-      point.y = p.y + transed_tf_point.getY();
-      point.z = p.z + transed_tf_point.getZ();
+      tf2::Vector3 base_linkTF_point;
+      base_linkTF_point = tf2_base_link_to_sensor.inverse() * sensorTF_point;
+
+      theta += w * time_offset;
+      tf2::Quaternion baselink_quat;
+      baselink_quat.setRPY(0.0, 0.0, theta);
+      double dis = v * time_offset;
+      x += dis * cos(theta);
+      y += dis * sin(theta);
+
+      tf2::Transform baselinkTF_odom;
+      baselinkTF_odom.setOrigin(tf2::Vector3(x, y, 0));
+      baselinkTF_odom.setRotation(baselink_quat);
+
+      tf2::Vector3 base_linkTF_tras_point;
+      base_linkTF_tras_point = baselinkTF_odom * base_linkTF_point;
+
+      tf2::Vector3 sensorTF_tras_point;
+      sensorTF_tras_point = tf2_base_link_to_sensor * base_linkTF_tras_point;
+
+      point.x = sensorTF_tras_point.getX();
+      point.y = sensorTF_tras_point.getY();
+      point.z = sensorTF_tras_point.getZ();
       point.intensity = p.intensity;
       point.ring = p.ring;
       output_pointcloud->points.push_back(point);
