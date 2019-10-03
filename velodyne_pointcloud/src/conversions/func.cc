@@ -133,7 +133,8 @@ namespace velodyne_pointcloud
 		  for(size_t y = 0; y < image.rows; ++y) {
 				label = label_image.at<int>(y, x);
 				tmp_p2 = input_pointcloud->points.at(ring_id_array.at(y)+x*image.rows);
-				if(label != 0 && tmp_p2.intensity != 0 && stat_area.at(label) >= points_size_threshold) {
+        if(label != 0 && stat_area.at(label) >= points_size_threshold
+           && tmp_p2.distance == 0 && tmp_p2.intensity <= 100 && tmp_p2.intensity != invalid_intensity_array[tmp_p2.ring]) {
       		tmp_p.x = tmp_p2.x;
       		tmp_p.y = tmp_p2.y;
       		tmp_p.z = tmp_p2.z;
