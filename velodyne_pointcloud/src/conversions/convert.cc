@@ -42,10 +42,10 @@ namespace velodyne_pointcloud
 
     std::string invalid_intensity;
     private_nh.getParam("invalid_intensity", invalid_intensity);
-    YAML::Node topics = YAML::Load(invalid_intensity);
+    YAML::Node invalid_intensity_yaml = YAML::Load(invalid_intensity);
     invalid_intensity_array_ = std::vector<float>(data_->getNumLasers(), 0);
-    for(size_t i = 0; i < topics.size(); ++i) {
-        invalid_intensity_array_.at(i) = topics[i].as<float>();
+    for(size_t i = 0; i < invalid_intensity_yaml.size(); ++i) {
+        invalid_intensity_array_.at(i) = invalid_intensity_yaml[i].as<float>();
     }
 
     // advertise
@@ -68,6 +68,13 @@ namespace velodyne_pointcloud
   {
   	ROS_INFO("Reconfigure Request");
   	data_->setParameters(config.min_range, config.max_range, config.view_direction, config.view_width);
+    num_points_thresthold_ = config.num_points_thresthold;
+
+    YAML::Node invalid_intensity_yaml = YAML::Load(config.invalid_intensity);
+    invalid_intensity_array_ = std::vector<float>(data_->getNumLasers(), 0);
+    for(size_t i = 0; i < invalid_intensity_yaml.size(); ++i) {
+        invalid_intensity_array_.at(i) = invalid_intensity_yaml[i].as<float>();
+    }
   }
 
   void Convert::processTwist(const geometry_msgs::TwistStamped::ConstPtr &twist_msg)

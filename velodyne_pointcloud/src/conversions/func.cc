@@ -21,7 +21,6 @@
 
 #include <opencv2/opencv.hpp>
 
-
 namespace velodyne_pointcloud
 {
   pcl::PointCloud<velodyne_pointcloud::PointXYZIRADT>::Ptr extractValidPoints(const pcl::PointCloud<velodyne_pointcloud::PointXYZIRADT>::ConstPtr &input_pointcloud, const double min_range, const double max_range)
@@ -87,15 +86,15 @@ namespace velodyne_pointcloud
     std::vector<uint16_t> ring_id_array;
     //NOTE support only VLP16 and VLP32C
     if(num_lasers == 16) {
-      ring_id_array = { 7, 15, 0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14 };      
+      ring_id_array = { 2, 4, 6, 8, 10, 12, 14, 0, 3, 5, 7, 9, 11, 13, 15, 1 };
     }
     else if(num_lasers == 32) {
-      ring_id_array = { 0, 17, 15, 1, 2, 20, 18, 3, 4, 21, 19, 5, 6, 24, 22, 8, 7, 25, 23, 9, 10, 27, 26, 12, 11, 29, 28, 13, 14, 31, 30, 16 };
+      ring_id_array = { 30, 1, 2, 5, 6, 9, 10, 14, 13, 17, 18, 22, 21, 25, 26, 0, 29, 31, 4, 8, 3, 7, 12, 16, 11, 15, 20, 19, 24, 23, 27, 28};
     }
-
 
     velodyne_pointcloud::PointXYZIRADT tmp_p2;
 		cv::Mat image = cv::Mat::zeros(cv::Size(input_pointcloud->size()/num_lasers, num_lasers), CV_8UC1);
+
     for(size_t x = 0; x < image.cols; ++x) {
       for(size_t y = 0; y < image.rows; ++y) {
         tmp_p2 = input_pointcloud->points.at(ring_id_array.at(y)+x*image.rows);
@@ -103,7 +102,7 @@ namespace velodyne_pointcloud
 				  image.at<unsigned char>(y, x) = 255;
         }
         else {
-          image.at<unsigned char>(y, x) = 0 ;
+          image.at<unsigned char>(y, x) = 0;
         }
 			}
 		}
@@ -111,6 +110,9 @@ namespace velodyne_pointcloud
   	cv::Mat element(3, 3, CV_8UC1, cv::Scalar::all(255));
 		cv::morphologyEx(image, image, cv::MORPH_OPEN, element, cv::Point(-1, -1), 3);
 		cv::morphologyEx(image, image, cv::MORPH_CLOSE, element, cv::Point(-1, -1), 3);
+
+    // cv::imshow("aaa", image);
+    // cv::waitKey(1);
 
 		cv::Mat label_image(image.size(), CV_32S);
 		cv::Mat stats;
@@ -121,9 +123,9 @@ namespace velodyne_pointcloud
 		for(size_t label = 0; label < label_n; ++label) {
 			int* param = stats.ptr<int>(label);
 			stat_area.push_back(param[cv::ConnectedComponentsTypes::CC_STAT_AREA]);
-			// std::cout << param[cv::ConnectedComponentsTypes::CC_STAT_AREA] << " ";
+			// std::cerr << param[cv::ConnectedComponentsTypes::CC_STAT_AREA] << " ";
 		}
-		// std::cout << std::endl;
+		// std::cerr << std::endl;
 
     pcl::PointCloud<velodyne_pointcloud::PointXYZIR>::Ptr output_pointcloud(new pcl::PointCloud<velodyne_pointcloud::PointXYZIR>);
     output_pointcloud->reserve(input_pointcloud->points.size());
@@ -242,7 +244,6 @@ namespace velodyne_pointcloud
     output_pointcloud->points.resize(input_pointcloud->points.size());
     pcl::PointCloud<velodyne_pointcloud::PointXYZIRADT> segment_pointcloud;
     for(size_t i = 0; i < input_pointcloud->points.size(); ++i) {
-
 			segment_pointcloud.points.push_back(input_pointcloud->points.at(i));
 			if(i % num_lasers == (num_lasers-1)) {
 				std::sort(std::begin(segment_pointcloud.points), std::end(segment_pointcloud.points),
@@ -262,9 +263,9 @@ namespace velodyne_pointcloud
   pcl::PointCloud<velodyne_pointcloud::PointXYZIRADT>::Ptr sortZeroIndex(const pcl::PointCloud<velodyne_pointcloud::PointXYZIRADT>::ConstPtr& input_pointcloud, const size_t num_lasers)
 	{
 		size_t zero_index = 0;
+    int last_azimuth = input_pointcloud->points.at(0).azimuth;
 		for(size_t i = 0; i < input_pointcloud->points.size(); ++i) {
 			if(input_pointcloud->points.at(i).ring == (num_lasers-1)/2){
-				static int last_azimuth = input_pointcloud->points.at(i).azimuth;
 				if(last_azimuth <= 18000 && input_pointcloud->points.at(i).azimuth > 18000) {
 					zero_index = i;
 					break;

@@ -36,6 +36,8 @@ find_library(YAML_CPP_LIBRARY
              NAMES YAML_CPP
              PATHS ${YAML_CPP_LIBRARY_DIRS})
 
+find_package(OpenCV REQUIRED)
+
 link_directories(${YAML_CPP_LIBRARY_DIRS})
 
 generate_dynamic_reconfigure_options(
@@ -48,6 +50,7 @@ endif(NOT ${YAML_CPP_VERSION} VERSION_LESS "0.5")
 
 include_directories(include ${catkin_INCLUDE_DIRS} 
   ${dynamic_reconfigure_PACKAGE_PATH}/cmake/cfgbuild.cmake
+  ${OpenCV_INCLUDE_DIRS}
 )
 
 catkin_package(
